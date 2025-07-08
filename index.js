@@ -4,14 +4,21 @@ const { Client, GatewayIntentBits, PermissionsBitField, EmbedBuilder } = require
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMembers,
     GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.MessageContent,
-    GatewayIntentBits.GuildMembers
+    GatewayIntentBits.MessageContent
   ]
 });
 
 client.once('ready', () => {
-  console.log(`✅ Bot is online as: ${client.user.tag}`);
+  console.log(`✅ Logged in as ${client.user.tag}`);
+});
+
+client.on('guildMemberAdd', member => {
+  const channel = member.guild.systemChannel;
+  if (channel) {
+    channel.send(`👋 أهلاً بك في السيرفر، ${member}!`);
+  }
 });
 
 client.on('interactionCreate', async interaction => {
@@ -22,32 +29,25 @@ client.on('interactionCreate', async interaction => {
   if (commandName === 'kick') {
     const member = interaction.options.getMember('user');
     if (!interaction.member.permissions.has(PermissionsBitField.Flags.KickMembers)) {
-      return interaction.reply({ content: "❌ You don't have permission to kick.", ephemeral: true });
+      return interaction.reply({ content: "🚫 لا تملك صلاحية الطرد", ephemeral: true });
     }
-    if (!member) return interaction.reply({ content: "❗ Member not found.", ephemeral: true });
+    if (!member) return interaction.reply({ content: "⚠️ العضو غير موجود", ephemeral: true });
 
-    try {
-      await member.kick();
-      interaction.reply(`🚫 ${member.user.tag} has been kicked.`);
-    } catch (err) {
-      console.error(err);
-      interaction.reply({ content: "❌ Failed to kick member.", ephemeral: true });
-    }
+    await member.kick();
+    interaction.reply(`✅ تم طرد ${member.user.tag}`);
   }
 
   if (commandName === 'mute') {
     const member = interaction.options.getMember('user');
+    const duration = interaction.options.getInteger('duration');
+
     if (!interaction.member.permissions.has(PermissionsBitField.Flags.MuteMembers)) {
-      return interaction.reply({ content: "❌ You don't have permission to mute.", ephemeral: true });
+      return interaction.reply({ content: "🚫 لا تملك صلاحية الكتم", ephemeral: true });
     }
 
-    let muteRole = interaction.guild.roles.cache.find(role => role.name === "Muted");
+    let muteRole = interaction.guild.roles.cache.find(r => r.name === 'Muted');
     if (!muteRole) {
-      muteRole = await interaction.guild.roles.create({
-        name: "Muted",
-        permissions: [],
-      });
-
+      muteRole = await interaction.guild.roles.create({ name: 'Muted', permissions: [] });
       interaction.guild.channels.cache.forEach(channel => {
         channel.permissionOverwrites.create(muteRole, {
           SendMessages: false,
@@ -57,39 +57,65 @@ client.on('interactionCreate', async interaction => {
     }
 
     await member.roles.add(muteRole);
-    interaction.reply(`🔇 ${member.user.tag} has been muted.`);
+    interaction.reply(`🔇 ${member.user.tag} تم كتمه لمدة ${duration || 'غير محددة'} دقيقة`);
+
+    if (duration) {
+      setTimeout(async () => {
+        await member.roles.remove(muteRole);
+      }, duration * 60 * 1000);
+    }
   }
 
   if (commandName === 'announce') {
-    const content = interaction.options.getString('message');
+    const msg = interaction.options.getString('message');
     const embed = new EmbedBuilder()
-      .setTitle("📢 Announcement")
-      .setDescription(content || "No content provided.")
-      .setColor(0xf1c40f)
-      .setFooter({ text: "Sent by " + interaction.user.username })
+      .setTitle("📢 إعلان")
+      .setDescription(msg)
+      .setColor(0xf39c12)
+      .setFooter({ text: `من طرف ${interaction.user.username}` })
       .setTimestamp();
-
     interaction.channel.send({ embeds: [embed] });
-    interaction.reply({ content: '✅ Announcement sent!', ephemeral: true });
+    interaction.reply({ content: '✅ تم إرسال الإعلان!', ephemeral: true });
   }
 
   if (commandName === 'server-info') {
-    const { guild } = interaction;
-
     const embed = new EmbedBuilder()
-      .setTitle('📊 Server Information')
-      .setColor(0x3498db)
+      .setTitle("📊 معلومات السيرفر")
       .addFields(
-        { name: 'Server Name', value: guild.name, inline: true },
-        { name: 'Server ID', value: guild.id, inline: true },
-        { name: 'Members', value: `${guild.memberCount}`, inline: true },
-        { name: 'Created At', value: `<t:${Math.floor(guild.createdTimestamp / 1000)}:F>`, inline: true },
-        { name: 'Locale', value: guild.preferredLocale, inline: true }
+        { name: 'اسم السيرفر', value: interaction.guild.name, inline: true },
+        { name: 'عدد الأعضاء', value: `${interaction.guild.memberCount}`, inline: true },
+        { name: 'أنشئ في', value: `<t:${Math.floor(interaction.guild.createdTimestamp / 1000)}:F>`, inline: true }
       )
-      .setThumbnail(guild.iconURL({ dynamic: true }))
+      .setThumbnail(interaction.guild.iconURL())
+      .setColor(0x3498db)
       .setTimestamp();
+    interaction.reply({ embeds: [embed] });
+  }
 
-    await interaction.reply({ embeds: [embed] });
+  if (commandName === 'send') {
+    const channel = interaction.options.getChannel('channel');
+    const msg = interaction.options.getString('message') || '';
+    const image = interaction.options.getAttachment('image');
+    const user = interaction.options.getUser('user');
+    const role = interaction.options.getRole('role');
+
+    let mention = '';
+    if (user) mention += `<@${user.id}> `;
+    if (role) mention += `<@&${role.id}> `;
+
+    const options = {
+      content: `${mention}${msg}`
+    };
+
+    if (image) options.files = [image.url];
+
+    try {
+      await channel.send(options);
+      interaction.reply({ content: '✅ تم الإرسال بنجاح', ephemeral: true });
+    } catch (err) {
+      console.error(err);
+      interaction.reply({ content: '❌ فشل الإرسال', ephemeral: true });
+    }
   }
 });
 
